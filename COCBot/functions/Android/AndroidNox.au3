@@ -6,7 +6,7 @@
 ; Return values .: None
 ; Author ........: Cosote (02-2016)
 ; Modified ......:
-; Remarks .......: This file is part of MyBot, previously known as ClashGameBot. Copyright 2015-2019
+; Remarks .......: This file is part of MyBot, previously known as ClashGameBot. Copyright 2015-2024
 ;                  MyBot is distributed under the terms of the GNU GPL
 ; Related .......:
 ; Link ..........: https://github.com/MyBotRun/MyBot/wiki
@@ -115,7 +115,12 @@ Func GetNoxRtPath()
 EndFunc   ;==>GetNoxRtPath
 
 Func GetNoxPath()
-	$__Nox_Version = RegRead($g_sHKLM & "\SOFTWARE" & $g_sWow6432Node & "\Microsoft\Windows\CurrentVersion\Uninstall\Nox\", "DisplayVersion")
+	Local $sVersion = RegRead($g_sHKLM & "\SOFTWARE" & $g_sWow6432Node & "\Microsoft\Windows\CurrentVersion\Uninstall\Nox\", "DisplayVersion")
+	If @error Then
+		SetLog("Nox version not found", $COLOR_ERROR)
+	EndIf
+	$__Nox_Version = $sVersion  ; set Nox global version number
+
 	Local $path = RegRead($g_sHKLM & "\SOFTWARE" & $g_sWow6432Node & "\DuoDianOnline\SetupInfo\", "InstallPath")
 	If @error = 0 Then
 		If StringRight($path, 1) <> "\" Then $path &= "\"
@@ -134,30 +139,21 @@ Func GetNoxAdbPath()
 EndFunc   ;==>GetNoxAdbPath
 
 Func GetNoxBackgroundMode()
-
-	Local $iDirectX = $g_iAndroidBackgroundModeDirectX
-	Local $iOpenGL = $g_iAndroidBackgroundModeOpenGL
-	; hack for super strange Windows Fall Creator Update with OpenGL and DirectX problems
-	; doesn't have this issue with OSBuild : 17134
-	If @OSBuild >= 16299 And @OSBuild < 17134 Then
-		SetDebugLog("DirectX/OpenGL Fix applied for Windows Build 16299")
-		$iDirectX = $g_iAndroidBackgroundModeOpenGL
-		$iOpenGL = $g_iAndroidBackgroundModeDirectX
-	EndIf
-	; get OpenGL/DirectX config
+	; Get OpenGL/DirectX config
 	Local $sConfig = GetNoxConfigFile()
 	If $sConfig Then
-		Local $graphic_engine_type = IniRead($sConfig, "setting", "graphic_engine_type", "") ; 0 = OpenGL, 1 = DirectX
+		Local $graphic_engine_type = IniRead($sConfig, "setting", "graphic_engine_type", "0") ; 2 = OpenGL+, 1 = DirectX, 0 = key is not found OpenGL
 		Switch $graphic_engine_type
-			Case "0", ""
-				Return $iOpenGL
+			Case "0"
+				Return $g_iAndroidBackgroundModeOpenGL
 			Case "1"
-				Return $iDirectX
-			Case Else
-				SetLog($g_sAndroidEmulator & " unsupported Graphics Engine Type " & $graphic_engine_type, $COLOR_WARNING)
+				Return $g_iAndroidBackgroundModeDirectX
+			Case "2"
+				Return $g_iAndroidBackgroundModeOpenGL
 		EndSwitch
+	Else
+		Return $g_iAndroidBackgroundModeOpenGL
 	EndIf
-	Return 0
 EndFunc   ;==>GetNoxBackgroundMode
 
 Func InitNox($bCheckOnly = False)
@@ -166,9 +162,11 @@ Func InitNox($bCheckOnly = False)
 
 	Local $path = GetNoxPath()
 	Local $RtPath = GetNoxRtPath()
+
 	Local $NoxFile = $path & "Nox.exe"
 	Local $AdbFile = $path & "nox_adb.exe"
 	Local $VBoxFile = $RtPath & "BigNoxVMMgr.exe"
+
 	Local $Files = [$NoxFile, $AdbFile, $VBoxFile]
 
 	Local $sPreferredADB = FindPreferredAdbPath()
@@ -194,9 +192,9 @@ Func InitNox($bCheckOnly = False)
 		$g_sAndroidProgramPath = $NoxFile
 		$g_sAndroidAdbPath = $sPreferredADB
 		If $g_sAndroidAdbPath = "" Then $g_sAndroidAdbPath = GetNoxAdbPath()
-		$g_sAndroidVersion = $__Nox_Version
 		$__Nox_Path = $path
 		$g_sAndroidPath = $__Nox_Path
+		$g_sAndroidVersion = $__Nox_Version
 		$__VBoxManage_Path = $VBoxFile
 		$aRegexResult = StringRegExp($__VBoxVMinfo, ".*host ip = ([^,]+), .* guest port = 5555", $STR_REGEXPARRAYMATCH)
 		If Not @error Then
@@ -234,9 +232,15 @@ Func InitNox($bCheckOnly = False)
 				ExitLoop
 			EndIf
 		Next
-		
+		#cs
+			If $v >= GetVersionNormalized("5.0.0.0") Then
+			$g_aiMouseOffset[0] = 6
+			$g_aiMouseOffset[1] = 7
+			SetDebugLog("Update Android Mouse Offset to " & $g_aiMouseOffset[0] & ", " & $g_aiMouseOffset[1])
+			EndIf
+		#ce
+
 		; Update shared folder state
-		$g_sAndroidSharedFolderName = "Other"
 		ConfigureSharedFolderNox(0) ; something like C:\Users\Administrator\Documents\Nox_share\Other\
 
 		UpdateHWnD($g_hAndroidWindow, False) ; Ensure $g_sAppClassInstance is properly set
@@ -261,36 +265,26 @@ EndFunc   ;==>GetNoxConfigFile
 Func ConfigureSharedFolderNox($iMode = 0, $bSetLog = Default)
 	If $bSetLog = Default Then $bSetLog = True
 	Local $bResult = False
-	
-	
-	Local $NoxInstance_ConfigFile = GetNoxConfigFile()
-	Local $NoxInstance_Config = FileReadToArray($NoxInstance_ConfigFile)
-	Local $iLineCount = @extended
-	
+
 	Switch $iMode
 		Case 0 ; check that shared folder is configured in VM
-			For $i = 0 To $iLineCount - 1
-				If StringInStr($NoxInstance_Config[$i], "share_path=") Then 
-					Local $aPath = StringRegExp($NoxInstance_Config[$i], "share_path=(.+)", $STR_REGEXPARRAYMATCH)
-					If IsArray($aPath) And Not @error Then 
-						Local $path = StringStripWS((StringReplace($aPath[0], '\\', '\')), $STR_STRIPTRAILING)
-						If StringRight($path, 1) <> "\" Then $path &= "\"
-						$g_sAndroidPicturesHostPath = $path & "ImageShare\"
-						$bResult = True
-						$g_bAndroidSharedFolderAvailable = True
-						$g_sAndroidPicturesPath = "/data/media/0/Pictures/"
-						SetDebugLog("g_sAndroidPicturesHostPath = " & $g_sAndroidPicturesHostPath)
-						SetDebugLog("g_sAndroidPicturesPath = " & $g_sAndroidPicturesPath)
-					EndIf
-				EndIf
-			Next
+			$g_sAndroidPicturesPath = "/mnt/shared/Image"
+			Local $aRegexResult = StringRegExp($__VBoxVMinfo, "Name: 'Image', Host path: '(.*)'.*", $STR_REGEXPARRAYGLOBALMATCH)
+			If Not @error Then
+				$bResult = True
+				$g_bAndroidSharedFolderAvailable = True
+				$g_sAndroidPicturesHostPath = $aRegexResult[UBound($aRegexResult) - 1] & "\"
+			EndIf
+
+		Case 1 ; create missing shared folder
+
 		Case Else
 			; use default impl.
-			Return SetError(1, 0, "")
+			Return SetError(1, 0, $bResult)
 	EndSwitch
-	
+
 	Return SetError(0, 0, $bResult)
-EndFunc
+EndFunc   ;==>ConfigureSharedFolderNox
 
 Func SetScreenNox()
 
@@ -298,31 +292,31 @@ Func SetScreenNox()
 
 	Local $cmdOutput, $process_killed
 
+	; These setting don't stick, so not used and instead using paramter: http://en.bignox.com/blog/?p=354
+	; Set width and height
+	;$cmdOutput = LaunchConsole($__VBoxManage_Path, "guestproperty set " & $g_sAndroidInstance & " vbox_graph_mode " & $g_iAndroidClientWidth & "x" & $g_iAndroidClientHeight & "-16", $process_killed)
+	; Set dpi
+	;$cmdOutput = LaunchConsole($__VBoxManage_Path, "guestproperty set " & $g_sAndroidInstance & " vbox_dpi 160", $process_killed)
+
 	ConfigureSharedFolder(1, True)
 	ConfigureSharedFolder(2, True)
 
 	; find Nox conf.ini in C:\Users\User\AppData\Local\Nox and set "Fix window size" to Enable, "Remember size and position" to Disable and screen res also
 	Local $sConfig = GetNoxConfigFile()
-	
 	If $sConfig Then
 		SetDebugLog("Configure Nox screen config: " & $sConfig)
 		IniWrite($sConfig, "setting", "h_resolution", $g_iAndroidClientWidth & "x" & $g_iAndroidClientHeight)
-		IniWrite($sConfig, "setting", "v_resolution", $g_iAndroidClientHeight & "x" & $g_iAndroidClientWidth)
 		IniWrite($sConfig, "setting", "h_dpi", "160")
-		IniWrite($sConfig, "setting", "v_dpi", "160")
-		IniWrite($sConfig, "setting", "language", "nox_en")
-		IniWrite($sConfig, "setting", "root", "true")
-		IniWrite($sConfig, "setting", "show_create_appshortcuts_guide_finished", "false")
 		IniWrite($sConfig, "setting", "fixsize", "true")
-		IniWrite($sConfig, "setting", "show_toolbar", "false")
-		IniWrite($sConfig, "setting", "isChangeResolution", "YES")
 		IniWrite($sConfig, "setting", "is_save_pos_and_size", "false")
 		IniWrite($sConfig, "setting", "last_player_width", "864")
 		IniWrite($sConfig, "setting", "last_player_height", "770")
 	Else
 		SetDebugLog("Cannot find Nox config to cnfigure screen: " & $sConfig, $COLOR_ERROR)
 	EndIf
+
 	Return True
+
 EndFunc   ;==>SetScreenNox
 
 Func RebootNoxSetScreen()
@@ -357,14 +351,14 @@ Func CheckScreenNox($bSetLog = True)
 					SetLog("Cannot validate " & $g_sAndroidEmulator & " property " & $aValues[$i][0], $COLOR_ERROR)
 				Else
 					SetDebugLog("Cannot validate " & $g_sAndroidEmulator & " property " & $aValues[$i][0], $COLOR_ERROR)
-				EndIF
+				EndIf
 			Else
 				$Value = $aValues[$i][1]
 				If $bSetLog Then
 					SetLog("Cannot validate " & $g_sAndroidEmulator & " property " & $aValues[$i][0] & ", assuming " & $Value, $COLOR_ERROR)
 				Else
 					SetDebugLog("Cannot validate " & $g_sAndroidEmulator & " property " & $aValues[$i][0] & ", assuming " & $Value, $COLOR_ERROR)
-				EndIF
+				EndIf
 			EndIf
 		EndIf
 

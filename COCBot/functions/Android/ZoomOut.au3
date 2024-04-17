@@ -582,10 +582,15 @@ Func SearchZoomOut($bCenterVillage = True, $UpdateMyVillage = True, $sSource = "
 	Local $bUpdateSharedPrefs = $g_bUpdateSharedPrefs And $g_iAndroidZoomoutMode = 4
 
 	Local $village
-	Local $bOnBuilderBase = False
+	Local $bOnBuilderBase = isOnBuilderBase()
 	;If $sSource <> "VillageSearch" Then $bOnBuilderBase = isOnBuilderBase()
 	
 	If StringInStr($sSource, "AttackBB") Then $bOnBuilderBase = True
+	If $g_aiSearchZoomOutCounter[0] > 3 Then
+		ZoomOutHelper()
+		ZoomOutHelperBB("SwitchBetweenBases")
+	EndIf
+	
 	If $g_aiSearchZoomOutCounter[0] = 10 Then SetLog("Try secondary village measuring...", $COLOR_INFO)
 	If $g_aiSearchZoomOutCounter[0] < 10 Then
 		$village = GetVillageSize($DebugLog, "stone", "tree", $bOnBuilderBase)
@@ -742,7 +747,7 @@ Func ZoomIn($Region = "Top")
 	
 	Switch $g_sAndroidEmulator
 		Case "MEmu", "Nox"
-			$sScript &= ".Memu"
+			$sScript &= ".MEmu"
 		Case "BlueStacks5"
 			$sScript &= ".BlueStacks5"
 	EndSwitch
